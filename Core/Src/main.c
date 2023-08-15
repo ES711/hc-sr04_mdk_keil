@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "i2c.h"
 #include "tim.h"
 #include "usart.h"
@@ -26,6 +27,12 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "FreeRTOS.h"
+#include "queue.h"
+#include "semphr.h"
+#include "task.h"
+#include "oled.h"
+#include "u8g2.h"
 #include "stdio.h"
 /* USER CODE END Includes */
 
@@ -47,11 +54,15 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+TaskHandle_t handleOled;
+TaskHandle_t handleHC_SR04;
+u8g2_t u8g2;
+QueueHandle_t queueHC_SR04;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -64,6 +75,53 @@ void microDelay(uint32_t time){
 	while(__HAL_TIM_GET_COUNTER(&htim3) < time){
 	}
 	__HAL_TIM_DISABLE(&htim3);
+}
+
+void taskOledControl(){
+	char displayStr[32];
+	float distance = 0;
+	u8g2Init(&u8g2);
+	u8g2_ClearBuffer(&u8g2);
+	u8g2_ClearDisplay(&u8g2);
+	u8g2_SetFont(&u8g2,u8g2_font_DigitalDiscoThin_tf);
+	for(;;){
+		if(xQueueReceive(queueHC_SR04, &distance, pdMS_TO_TICKS(500)) == pdPASS){
+			snprintf(displayStr, 32, "Dist: %.2fcm",distance);
+			u8g2_ClearBuffer(&u8g2);
+			u8g2_DrawStr(&u8g2, 0, 20,displayStr);
+			u8g2_SendBuffer(&u8g2);
+		}
+		else{
+			snprintf(displayStr, 32, "HC-SR04 Error");
+			u8g2_ClearBuffer(&u8g2);
+			u8g2_DrawStr(&u8g2, 0, 20,displayStr);
+			u8g2_SendBuffer(&u8g2);
+		}
+		vTaskDelay(500);
+	}
+}
+
+void taskMicroWave(){
+	for(;;){
+		float distance = 0;
+		HAL_GPIO_WritePin(GPIOB, HC_TRIG_Pin, 1);
+		microDelay(20);
+		HAL_GPIO_WritePin(GPIOB, HC_TRIG_Pin, 0);
+
+		int echoTimer = 0;
+		__HAL_TIM_SetCounter(&htim3, 0);
+		while(HAL_GPIO_ReadPin(GPIOB, HC_ECHO_Pin) == 0);
+		microDelay(10);
+		__HAL_TIM_ENABLE(&htim3);
+		while(HAL_GPIO_ReadPin(GPIOB, HC_ECHO_Pin) == 1);
+		echoTimer = __HAL_TIM_GET_COUNTER(&htim3);
+		__HAL_TIM_DISABLE(&htim3);
+		distance += echoTimer/58.0;
+
+		xQueueSend(queueHC_SR04, &distance, portMAX_DELAY);
+		vTaskDelay(100);
+	}
+	
 }
 /* USER CODE END 0 */
 
@@ -100,34 +158,39 @@ int main(void)
   MX_USB_OTG_FS_PCD_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-
+	xTaskCreate(taskOledControl, "display", 512, NULL, 1, &handleOled);
+	xTaskCreate(taskMicroWave, "HC-SR04", 128, NULL, 2, &handleHC_SR04);
+	queueHC_SR04 = xQueueCreate(5, 4);
+	vTaskStartScheduler();
   /* USER CODE END 2 */
 
+  /* Init scheduler */
+  //osKernelInitialize();  /* Call init function for freertos objects (in freertos.c) */
+  //MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  //osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+		/*
 		float sum = 0;
 		//float voiceSpeed = 344;
-		float voiceSpeed = 331.4 + 0.607*33;
+		float voiceSpeed = 331.4 + 0.607*26;
 		float voiceSpeedPreSec = voiceSpeed * 1e-6;
 		HAL_GPIO_TogglePin(GPIOB, LD1_Pin);
 		HAL_GPIO_WritePin(GPIOB, HC_TRIG_Pin, 1);
 		microDelay(20);
 		HAL_GPIO_WritePin(GPIOB, HC_TRIG_Pin, 0);
-		
-//		HAL_GPIO_WritePin(GPIOB, LD1_Pin, 0);
+
 		int echoTimer = 0;
 		__HAL_TIM_SetCounter(&htim3, 0);
 		while(HAL_GPIO_ReadPin(GPIOB, HC_ECHO_Pin) == 0);
 		microDelay(10);
 		__HAL_TIM_ENABLE(&htim3);
-//		while(HAL_GPIO_ReadPin(GPIOB, HC_ECHO_Pin) == 1){
-//				//HAL_GPIO_WritePin(GPIOB, LD3_Pin, 1);
-//				microDelay(1);
-//				echoTimer ++;
-////				microDelay(1);
-//		}
 		while(HAL_GPIO_ReadPin(GPIOB, HC_ECHO_Pin) == 1);
 		echoTimer = __HAL_TIM_GET_COUNTER(&htim3);
 		__HAL_TIM_DISABLE(&htim3);
@@ -145,6 +208,7 @@ int main(void)
 			HAL_GPIO_WritePin(GPIOB, LD2_Pin, 0);
 		}
 		HAL_Delay(500);
+		*/
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
